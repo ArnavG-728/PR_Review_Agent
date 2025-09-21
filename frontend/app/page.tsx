@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Loader2, Github, Copy, HelpCircle, ExternalLink } from 'lucide-react';
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001';
+
 // --- TYPE DEFINITIONS ---
 interface PullRequest {
   number: number;
@@ -175,7 +177,7 @@ export default function AIReviewAgent() {
     setResult(null);
 
     try {
-      const response = await fetch('http://localhost:5001/api/validate_repo', {
+            const response = await fetch(`${API_BASE_URL}/api/validate_repo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repo_url: githubUrl }),
@@ -216,7 +218,7 @@ export default function AIReviewAgent() {
       const repoPath = new URL(githubUrl).pathname.split('/').filter(p => p);
       const repo = `${repoPath[0]}/${repoPath[1]}`;
 
-      const response = await fetch('http://localhost:5001/api/review', {
+            const response = await fetch(`${API_BASE_URL}/api/review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repo, pr_id: Number(selectedPr), provider: 'github' }),
@@ -322,7 +324,7 @@ export default function AIReviewAgent() {
       setReviews([]);
       try {
         // 1. Check if workflow file exists
-        const workflowRes = await fetch('http://localhost:5001/api/check_workflow', {
+                const workflowRes = await fetch(`${API_BASE_URL}/api/check_workflow`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ repo_url: url }),
@@ -332,7 +334,7 @@ export default function AIReviewAgent() {
         if (workflowData.exists) {
           setWorkflowExists(true);
           // 2. If it exists, fetch the reviews
-          const reviewsRes = await fetch('http://localhost:5001/api/get_reviews', {
+                    const reviewsRes = await fetch(`${API_BASE_URL}/api/get_reviews`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ repo_url: url }),

@@ -12,7 +12,9 @@ from pr_review_agent.db_manager import db_manager
 import os
 
 app = Flask(__name__)
-CORS(app) # This will allow all origins by default
+# Whitelist of allowed origins for CORS
+frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+CORS(app, origins=[frontend_url], supports_credentials=True)
 
 @app.route('/api/validate_repo', methods=['POST'])
 def validate_repo_endpoint():

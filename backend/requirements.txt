@@ -11,3 +11,4 @@ python-gitlab
 radon
 Flask
 Flask-Cors
+gunicorn
