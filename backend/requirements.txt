@@ -1,0 +1,13 @@
+langchain
+langgraph
+langchain[google-genai]
+neo4j
+pylint
+bandit
+flake8
+requests
+python-dotenv
+python-gitlab
+radon
+Flask
+Flask-Cors
