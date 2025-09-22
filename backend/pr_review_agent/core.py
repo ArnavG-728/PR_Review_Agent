@@ -2,7 +2,8 @@
 
 import os
 import json
-from pr_review_agent.fetch_pr import GitHubClient, GitLabClient
+import logging
+from pr_review_agent.fetch_pr import create_git_client, GitProvider
 from pr_review_agent.analyze_code import analyze_pr_diff, parse_diff
 from pr_review_agent.generate_feedback import generate_ai_feedback
 from pr_review_agent.score_pr import calculate_pr_score
@@ -17,25 +18,32 @@ def run_review(repo: str, pr_id: int, provider: str = 'github', token: str = Non
 
     db = Database()
 
-    # 1. Fetch PR details
-    if provider.lower() == 'github':
-        client = GitHubClient(repo, token=token)
-    elif provider.lower() == 'gitlab':
-        client = GitLabClient(repo, token=token)
-    else:
-        raise NotImplementedError(f"Git provider '{provider}' is not supported yet.")
-    
-    details = client.get_pr_details(pr_id)
-    diff = client.get_pr_diff(pr_id)
+    # 1. Create Git client and fetch PR details
+    try:
+        git_provider = GitProvider(provider.lower())
+        client = create_git_client(git_provider, repo, token)
+        
+        # Validate connection
+        if not client.validate_connection():
+            raise ConnectionError(f"Failed to connect to {provider} repository: {repo}")
+        
+        details = client.get_pr_details(pr_id)
+        diff = client.get_pr_diff(pr_id)
 
-    pr_data = {
-        "id": pr_id,
-        "repo": repo,
-        "title": details.get('title'),
-        "author": details.get('author', {}).get('username') if provider == 'gitlab' else details.get('user', {}).get('login'),
-        "diff": diff,
-        "head_sha": details.get('head', {}).get('sha')
-    }
+        pr_data = {
+            "id": pr_id,
+            "repo": repo,
+            "title": details.get('title'),
+            "author": details.get('author', {}).get('display_name'),
+            "diff": diff,
+            "head_sha": details.get('source_sha'),
+            "provider": provider,
+            "details": details
+        }
+    except ValueError as e:
+        if "is not a valid GitProvider" in str(e):
+            raise NotImplementedError(f"Git provider '{provider}' is not supported yet.")
+        raise
     print(f"Successfully fetched PR: {pr_data.get('title')}")
     print(f"Author: {pr_data.get('author')}")
 
@@ -50,21 +58,44 @@ def run_review(repo: str, pr_id: int, provider: str = 'github', token: str = Non
             try:
                 content = client.get_file_content(file_info['file_path'], pr_data['head_sha'])
                 file_contents[file_info['file_path']] = content
-            except Exception:
-                pass # Ignore files that can't be fetched
+            except Exception as e:
+                logging.warning(f"Could not fetch content for file {file_info['file_path']}: {e}")
 
         # 4. Calculate PR score
         score = calculate_pr_score(analysis_results, file_contents)
 
-        # 5. Generate feedback using AI
-        feedback = generate_ai_feedback(analysis_results, pr_data['diff'])
-        feedback['score'] = score
+        # 5. Generate feedback using AI with enhanced context
+        pr_context = {
+            'title': pr_data['title'],
+            'description': pr_data['details'].get('description', ''),
+            'author': pr_data['author'],
+            'provider': pr_data['provider'],
+            'url': pr_data['details'].get('url', ''),
+            'files_changed': [f['file_path'] for f in parse_diff(pr_data['diff'])],
+            'branch': pr_data['details'].get('source_branch', 'unknown')
+        }
+        
+        feedback = generate_ai_feedback(analysis_results, pr_data['diff'], pr_context)
+        
+        # Maintain backward compatibility with score field
+        feedback['score'] = feedback.get('overall_score', score)
+        
+        # 6. Add PR details to feedback
+        feedback['pr_details'] = {
+            'number': pr_data['id'],
+            'title': pr_data['title'],
+            'author': pr_data['author'],
+            'provider': pr_data['provider'].title(),
+            'url': pr_data['details'].get('url', '')
+        }
 
-        # 6. Store results
+        # 7. Store results
         try:
             db.store_pr_data(pr_data, feedback)
         except Exception as db_error:
-            print(f"CRITICAL: Failed to store results in database. Error: {db_error}")
+            logging.error(f"CRITICAL: Failed to store results in database. Error: {db_error}")
+            # Optionally, add a warning to the feedback to be returned
+            feedback['warnings'] = feedback.get('warnings', []) + ["Failed to save review results to the database."]
             # We can choose to raise this or just log it. For now, we'll log it
             # and allow the feedback to be returned to the user regardless.
     except Exception as e:
@@ -77,7 +108,7 @@ def run_review(repo: str, pr_id: int, provider: str = 'github', token: str = Non
         }
         raise Exception(json.dumps(error_details)) from e
 
-    # 7. Save and print feedback
+    # 8. Save and print feedback
     if feedback.get('comments'):
         with open('review_comments.json', 'w') as f:
             json.dump(feedback['comments'], f, indent=2)

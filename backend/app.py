@@ -9,12 +9,24 @@ from urllib.parse import urlparse
 from pr_review_agent.core import run_review
 from pr_review_agent.github_api import get_pull_requests
 from pr_review_agent.db_manager import db_manager
+from pr_review_agent.fetch_pr import get_supported_providers, create_git_client, GitProvider
 import os
 
 app = Flask(__name__)
 # Whitelist of allowed origins for CORS
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-CORS(app, origins=[frontend_url], supports_credentials=True)
+allowed_origins = [frontend_url, "http://localhost:3001"]  # Add port 3001 for Next.js fallback
+CORS(app, origins=allowed_origins, supports_credentials=True)
+
+@app.route('/api/providers', methods=['GET'])
+def get_providers_endpoint():
+    """Get list of supported Git providers."""
+    try:
+        providers = get_supported_providers()
+        return jsonify({'providers': providers})
+    except Exception as e:
+        print(f"API Error on /api/providers: {e}")
+        return jsonify({'error': 'An internal error occurred.'}), 500
 
 @app.route('/api/validate_repo', methods=['POST'])
 def validate_repo_endpoint():
@@ -23,22 +35,51 @@ def validate_repo_endpoint():
         return jsonify({'error': 'repo_url is required'}), 400
 
     repo_url = data['repo_url']
+    provider = data.get('provider', 'github')
+    token = data.get('token')
+    
     try:
-        path = urlparse(repo_url).path.strip('/')
+        # Parse repository URL to extract owner/repo
+        parsed_url = urlparse(repo_url)
+        path = parsed_url.path.strip('/')
         parts = path.split('/')
+        
         if len(parts) < 2:
-            raise ValueError("Invalid repository URL format. Expected format: https://github.com/owner/repo")
+            raise ValueError("Invalid repository URL format")
         
-        owner, repo = parts[0], parts[1]
+        repo_name = f"{parts[0]}/{parts[1]}"
         
-        pull_requests = get_pull_requests(owner, repo)
-        return jsonify(pull_requests)
+        # Create git client and validate connection
+        try:
+            git_provider = GitProvider(provider.lower())
+            client = create_git_client(git_provider, repo_name, token)
+            
+            if not client.validate_connection():
+                return jsonify({'error': f'Cannot connect to {provider} repository: {repo_name}'}), 404
+            
+            # For now, only GitHub has the get_pull_requests function
+            if provider.lower() == 'github':
+                pull_requests = get_pull_requests(parts[0], parts[1])
+                return jsonify(pull_requests)
+            else:
+                # For other providers, just return success for now
+                return jsonify({
+                    'valid': True,
+                    'provider': provider,
+                    'repo': repo_name,
+                    'message': f'Repository validated successfully on {provider}'
+                })
+                
+        except ValueError as e:
+            if "is not a valid GitProvider" in str(e):
+                return jsonify({'error': f'Provider {provider} is not supported yet'}), 400
+            raise
 
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             return jsonify({'error': 'Repository not found or is private.'}), 404
         else:
-            return jsonify({'error': f'GitHub API error: {e.response.text}'}), e.response.status_code
+            return jsonify({'error': f'API error: {e.response.text}'}), e.response.status_code
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:

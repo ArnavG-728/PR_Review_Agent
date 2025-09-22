@@ -9,7 +9,7 @@ def main():
     parser = argparse.ArgumentParser(description='AI-powered Pull Request Review Agent.')
     parser.add_argument('--repo', required=True, help='Repository name in owner/repo format.')
     parser.add_argument('--pr-id', required=True, type=int, help='Pull Request ID.')
-    parser.add_argument('--provider', default='github', help='Git provider (e.g., github, gitlab).')
+    parser.add_argument('--provider', default='github', help='Git provider (e.g., github, gitlab, bitbucket).')
     parser.add_argument('--token', help='Personal access token for private repositories.')
 
     args = parser.parse_args()
